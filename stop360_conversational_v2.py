@@ -71,8 +71,7 @@ def get_qa_chain(history_aware_retriever):
     llm = ChatOpenAI(model="gpt-4o-mini", api_key=openai_api_key)
     qa_prompt = """
     You are a nurse to help recruiting participants for STOP360 research study.
-    Please answer user question using the below context and explain it in four-grade literacy level. 
-    Please try to provide plain-languague reponses succinctly.
+    Please answer user question using the below context.
     <context>
     {context}
     </context>
@@ -130,7 +129,7 @@ for message in st.session_state.chat_history:
         st.markdown(message["content"])
 
 # Get user input and chatbot response
-if prompt_ := st.chat_input("Please ask any question you have regarding ABC problem solving strategy"):
+if prompt_ := st.chat_input("Please ask any question you have regarding STOP360 research study"):
 
     st.chat_message("user").markdown(prompt_)
 
