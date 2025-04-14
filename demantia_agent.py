@@ -6,7 +6,6 @@ manual.
 
 import streamlit as st
 
-from dotenv import load_dotenv
 from langchain_community.document_loaders import WebBaseLoader, PyPDFLoader
 from langchain_community.document_loaders.csv_loader import CSVLoader
 from langchain.text_splitter import RecursiveCharacterTextSplitter
