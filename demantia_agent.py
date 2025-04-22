@@ -28,7 +28,7 @@ openai_api_key = st.secrets["OPENAI_API_KEY"]
 
 # Resource Agent using CSV Loader
 # Index the document and store it in vector store
-docs = CSVLoader("./star_c/caregiving_r.csv").load_and_split()
+docs = CSVLoader("./star_c/resource.csv").load_and_split()
 vector_store = FAISS.from_documents(docs, embedding=OpenAIEmbeddings())
 
 llm = ChatOpenAI(model="gpt-4o-mini")
@@ -168,7 +168,7 @@ def summarize(state: State):
 
     reference_ls = set(state['reference'])
     reference_text = "\n".join(r for r in reference_ls)
-    final_answer = response.content + f"\n\nReferences:\n {reference_text}"
+    final_answer = response.content + f"\n\nReferences: \n {reference_text}"
     return {"messages": [AIMessage(content=final_answer)]}
 
 
