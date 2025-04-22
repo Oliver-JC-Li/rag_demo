@@ -28,7 +28,7 @@ openai_api_key = st.secrets["OPENAI_API_KEY"]
 
 # Resource Agent using CSV Loader
 # Index the document and store it in vector store
-docs = CSVLoader("./star_c/resource.csv").load_and_split()
+docs = CSVLoader("./star_c/resources.csv").load_and_split()
 vector_store = FAISS.from_documents(docs, embedding=OpenAIEmbeddings())
 
 llm = ChatOpenAI(model="gpt-4o-mini")
