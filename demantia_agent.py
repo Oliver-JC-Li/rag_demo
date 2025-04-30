@@ -81,8 +81,11 @@ def web_rag(url_list):
     w_system_prompt = """
         You are an assistant for question-answering tasks.
         Use the following pieces of retrieved context to answer
-        the question. If you don't know the answer, say that you
-        don't know.
+        the question. If you don't know the answer,  please say 
+        "The study material does not contain this information", and then
+        use your general knowledge to provide possible answer. In the end,
+        please include a sentence to let us know you're using your general knowledge
+        to generate response.
         \n\n
         {context}
     """
@@ -109,7 +112,10 @@ t_system_prompt = """
     You are an assistant for question-answering tasks.
     Use the following pieces of retrieved context to answer
     the question. If you don't know the answer, please say 
-    "The study material does not contain this information"
+    "The study material does not contain this information" , and then
+    use your general knowledge to provide possible answer. In the end,
+    please include a sentence to let us know you're using your general knowledge
+    to generate response.
     \n\n
     {context}
 """
@@ -128,13 +134,13 @@ class State(MessagesState):
 
 
 def resource_rag(state: State):
-    url_ans = url_rag_chain.invoke({"input": state['messages'][0].content})
+    url_ans = url_rag_chain.invoke({"input": state['messages'][-1].content})
     if "http" not in url_ans['answer']:
         return {"messages": [AIMessage(content="The resource excel file does not contain relevant information")]}
     url = extract_url(url_ans['answer'])
 
     web_rag_chain = web_rag(url)
-    response = web_rag_chain.invoke({"input": state['messages'][0].content})
+    response = web_rag_chain.invoke({"input": state['messages'][-1].content})
     resource = [doc.metadata['source'] for doc in response['context']]
 
     return {"messages": [AIMessage(content=response['answer'])],
@@ -142,7 +148,7 @@ def resource_rag(state: State):
 
 
 def training_rag(state: State):
-    response = t_rag_chain.invoke({"input": state['messages'][0].content})
+    response = t_rag_chain.invoke({"input": state['messages'][-1].content})
     resource = [doc.metadata['source'] for doc in response['context']]
     return {"messages":[AIMessage(content=response['answer'])],
             "reference": resource}
@@ -158,10 +164,11 @@ def summarize(state: State):
     ai_response = ai_response[::-1]
 
     system_message = ("""
-        As a professional summarizer, create a concise and comprehensive summary of the provided text,while adhering to these guidelines:
-        * Craft a summary that is detailed, thorough, in-depth, and complex, while maintaining clarity and conciseness.
-        * Incorporate main ideas and essential information, eliminating extraneous language and focusing on critical aspects.
-        * Rely strictly on the provided text, without including external information.
+        You are a helpful assistant in summarizing. Please summarize the provided AI responses by following
+        the below guidelines:
+        * Ignore sentences like: "The study material does not provide this information"
+        * Include all the main ideas and essential information.
+        # Rely strictly on the provided text, without including external information.  
     """)
     prompt = [SystemMessage(content=system_message)] + ai_response
     response = llm.invoke(prompt)
@@ -189,7 +196,7 @@ graph = graph_builder.compile(checkpointer=memory)
 
 
 # Streamlit framework
-st.title("VSA with Resource and Manual Agents to assist demantia caregivers")
+st.title("VSA with Resource and Booklet Agents to assist demantia caregivers")
 config = {"configurable": {"thread_id": "abc123"},
           "callback": [StreamlitCallbackHandler(st.container())]}
 # Create and store chat history and vector db in session state
