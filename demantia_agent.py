@@ -32,7 +32,10 @@ docs = CSVLoader("./star_c/resources.csv").load_and_split()
 vector_store = FAISS.from_documents(docs, embedding=OpenAIEmbeddings())
 
 llm = ChatOpenAI(model="gpt-4o-mini")
-retriever = vector_store.as_retriever()
+retriever = vector_store.as_retriever(
+    search_kwargs={"k": 2}
+)
+
 system_prompt = """
     You are an assistant for question-answering tasks.
     Use the following pieces of retrieved context to answer
@@ -76,18 +79,25 @@ def web_rag(url_list):
     doc_chunks = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=20).split_documents(web_docs)
     web_vector_store = FAISS.from_documents(doc_chunks, embedding=OpenAIEmbeddings())
 
-    llm = ChatOpenAI(model="gpt-4o-mini")
+    llm = ChatOpenAI(model="gpt-4-turbo")
     web_retriever = web_vector_store.as_retriever()
     w_system_prompt = """
-        You are an assistant for question-answering tasks.
-        Use the following pieces of retrieved context to answer
-        the question. If you don't know the answer,  please say 
-        "The study material does not contain this information", and then
-        use your general knowledge to provide possible answer. In the end,
-        please include a sentence to let us know you're using your general knowledge
-        to generate response.
-        \n\n
-        {context}
+    You are a consultant with a master’s degree or equivalent in counseling, psychology, or social work, 
+    with clinical experience working with older adults. You will be answering questions from family 
+    caregivers of older adults living with Alzheimer's disease and related dementias.
+    
+    Please follow these response rules:
+    1. If the answer can be found in the knowledge base, respond in the following format:
+        Answer: [Your answer based on the knowledge]
+    2. If the answer cannot be found in the knowledge base, you must reply exactly with the following format:
+        Answer: "The STAR-C materials don’t have this information, I’ll also ask the STAR-C coach to check in with 
+                 you to make sure your question gets answered. However, here's the possible answer to your question"
+                 Then use your world knowlege to provide possible answer
+    3. Write at a 6th to 8th grade reading level. Avoid medical jargon. If a medical term must be used, 
+       define it simply.
+    4. Use an empathetic and supportive tone. Make the caregiver feel heard, respected, and understood.
+    \n\n
+    {context}
     """
 
     w_prompt = ChatPromptTemplate.from_messages([
@@ -106,16 +116,24 @@ def web_rag(url_list):
 training_doc = PyPDFLoader("./star_c/demantia_training.pdf").load()
 t_doc_chunk = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=20).split_documents(training_doc)
 t_vector_store = FAISS.from_documents(t_doc_chunk, embedding=OpenAIEmbeddings())
+llm = ChatOpenAI(model="gpt-4-turbo")
 
 training_retriever = t_vector_store.as_retriever()
 t_system_prompt = """
-    You are an assistant for question-answering tasks.
-    Use the following pieces of retrieved context to answer
-    the question. If you don't know the answer, please say 
-    "The study material does not contain this information" , and then
-    use your general knowledge to provide possible answer. In the end,
-    please include a sentence to let us know you're using your general knowledge
-    to generate response.
+    You are a consultant with a master’s degree or equivalent in counseling, psychology, or social work, 
+    with clinical experience working with older adults. You will be answering questions from family 
+    caregivers of older adults living with Alzheimer's disease and related dementias.
+    
+    Please follow these response rules:
+    1. If the answer can be found in the knowledge base, respond in the following format:
+        Answer: [Your answer based on the knowledge]
+    2. If the answer cannot be found in the knowledge base, you must reply exactly with the following format:
+        OOD_FLAG: The STAR-C materials don’t have this information, I’ll also ask the STAR-C coach to check in with 
+                  you to make sure your question gets answered. However, here's the possible answer to your question
+                  Then use your world knowlege to provide possible answer
+    3. Write at a 6th to 8th grade reading level. Avoid medical jargon. If a medical term must be used, 
+       define it simply.
+    4. Use an empathetic and supportive tone. Make the caregiver feel heard, respected, and understood.
     \n\n
     {context}
 """
@@ -130,53 +148,73 @@ t_rag_chain = create_retrieval_chain(training_retriever, t_qa_chain)
 
 # Define Graph Logic
 class State(MessagesState):
-    reference: Annotated[list[str], add]
+    responses: Annotated[list[dict], add]
 
 
 def resource_rag(state: State):
     url_ans = url_rag_chain.invoke({"input": state['messages'][-1].content})
-    if "http" not in url_ans['answer']:
-        return {"messages": [AIMessage(content="The resource excel file does not contain relevant information")]}
-    url = extract_url(url_ans['answer'])
-
-    web_rag_chain = web_rag(url)
-    response = web_rag_chain.invoke({"input": state['messages'][-1].content})
-    resource = [doc.metadata['source'] for doc in response['context']]
-
-    return {"messages": [AIMessage(content=response['answer'])],
-            "reference": resource}
+    retrieved = False if "http" not in url_ans['answer'] else True
+    if retrieved:
+        url = extract_url(url_ans['answer'])
+    
+        web_rag_chain = web_rag(url)
+        response = web_rag_chain.invoke({"input": state['messages'][-1].content})
+        resource = [doc.metadata['source'] for doc in response['context']]
+        return {
+            "responses":[{
+                "agent": "web_resourceRAG",
+                "is_from_source": True,
+                "response": response['answer'],
+                "resources": set(resource)
+            }]
+        }
+    else:
+        return {
+            "responses":[{
+                "agent": "web_resourceRAG",
+                "is_from_source": False,
+                "response": "The STAR-C materials don’t have this information, I’ll ask theSTAR-C coach to check in with you to make sure your question gets answered."
+            }]
+        }
 
 
 def training_rag(state: State):
     response = t_rag_chain.invoke({"input": state['messages'][-1].content})
-    resource = [doc.metadata['source'] for doc in response['context']]
-    return {"messages":[AIMessage(content=response['answer'])],
-            "reference": resource}
+    if "OOD_FLAG" not in response['answer']:
+        resource = [doc.metadata['source'] for doc in response['context']]
+        return {
+            "responses": [{
+                "agent": "bookletRAG",
+                "is_from_source": True,
+                "response": response['answer'],
+                "resources": set(resource)
+            }]
+        }
+    else:
+        return {
+            "responses": [{
+                "agent": "bookletRAG",
+                "is_from_source": False,
+                "response": response['answer'].split("OOD_FLAG: ")[1],
+            }]
+        }
 
 
 def summarize(state: State):
-    ai_response = []
-    for message in reversed(state['messages']):
-        if message.type == 'ai':
-            ai_response.append(message)
-        else:
-            break
-    ai_response = ai_response[::-1]
+    messages = []
 
-    system_message = ("""
-        You are a helpful assistant in summarizing. Please summarize the provided AI responses by following
-        the below guidelines:
-        * Ignore sentences like: "The study material does not provide this information"
-        * Include all the main ideas and essential information.
-        # Rely strictly on the provided text, without including external information.  
-    """)
-    prompt = [SystemMessage(content=system_message)] + ai_response
-    response = llm.invoke(prompt)
+    for i in range(-2, 0):
+        r = state['responses'][i]
+        agent = r.get("agent", "UnknownAgent")
+        if agent == "web_resourceRAG" and r.get("is_from_source") == False:
+            continue
+        source = r.get("resources", "No resources used")
+        response = r.get("response", "")
 
-    reference_ls = set(state['reference'])
-    reference_text = "\n".join(r for r in reference_ls)
-    final_answer = response.content + f"\n\nReferences: \n {reference_text}"
-    return {"messages": [AIMessage(content=final_answer)]}
+        messages.append(f"**{agent}**\nSource: {source}\nResponse: {response}")
+    
+    summary = "\n\n".join(messages)
+    return {"messages": [AIMessage(content=summary)]}
 
 
 graph_builder = StateGraph(MessagesState)
