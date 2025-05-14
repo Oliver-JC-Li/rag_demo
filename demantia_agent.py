@@ -120,20 +120,9 @@ llm = ChatOpenAI(model="gpt-4-turbo")
 
 training_retriever = t_vector_store.as_retriever()
 t_system_prompt = """
-    You are a consultant with a master’s degree or equivalent in counseling, psychology, or social work, 
-    with clinical experience working with older adults. You will be answering questions from family 
-    caregivers of older adults living with Alzheimer's disease and related dementias.
-    
-    Please follow these response rules:
-    1. If the answer can be found in the knowledge base, respond in the following format:
-        Answer: [Your answer based on the knowledge]
-    2. If the answer cannot be found in the knowledge base, you must reply exactly with the following format:
-        OOD_FLAG: The STAR-C materials don’t have this information, I’ll also ask the STAR-C coach to check in with 
-                  you to make sure your question gets answered. However, here's the possible answer to your question
-                  Then use your world knowlege to provide possible answer
-    3. Write at a 6th to 8th grade reading level. Avoid medical jargon. If a medical term must be used, 
-       define it simply.
-    4. Use an empathetic and supportive tone. Make the caregiver feel heard, respected, and understood.
+    You are an assistant for question-answering tasks. Use only the following pieces of retrieved context 
+    to answer the question. If you don't know the answer, please say 
+    "OOD_FLAG" Then use your world knowledge to provide possible answer.
     \n\n
     {context}
 """
@@ -195,26 +184,63 @@ def training_rag(state: State):
             "responses": [{
                 "agent": "bookletRAG",
                 "is_from_source": False,
-                "response": response['answer'].split("OOD_FLAG: ")[1],
+                "response": response['answer'].split("OOD_FLAG")[1],
             }]
         }
 
 
 def summarize(state: State):
+    llm = ChatOpenAI(model="gpt-4-turbo")
     messages = []
+    agent_1_r = state['responses'][-1]
+    agent_2_r = state['responses'][-2]
 
-    for i in range(-2, 0):
-        r = state['responses'][i]
-        agent = r.get("agent", "UnknownAgent")
-        if agent == "web_resourceRAG" and r.get("is_from_source") == False:
-            continue
-        source = r.get("resources", "No resources used")
-        response = r.get("response", "")
+    agent1_from_source = agent_1_r.get("is_from_source")
+    agent1_response = agent_1_r.get("response", "")
+    agent1_resouce = agent_1_r.get("resources", "No resources used")
 
-        messages.append(f"**{agent}**\nSource: {source}\nResponse: {response}")
+    agent2_from_source = agent_2_r.get("is_from_source")
+    agent2_response = agent_2_r.get("response", "")
+    agent2_resource = agent_2_r.get("resources", "No resources used")
+
+    response_prefix = False
     
-    summary = "\n\n".join(messages)
-    return {"messages": [AIMessage(content=summary)]}
+    if not agent1_from_source and agent2_from_source:
+        ans = f"Source: {agent2_resource}\nResponse: {agent2_response}"
+        messages.append(AIMessage(content=ans))
+    elif agent1_from_source and not agent2_from_source:
+        ans = f"Source: {agent1_resouce}\nResponse: {agent1_response}"
+        messages.append(AIMessage(content=ans))
+    elif not agent1_from_source and not agent2_from_source:
+        response_prefix = True
+        ans1 = f"Source: {agent1_resouce}\nResponse: {agent1_response}"
+        ans2 = f"Source: {agent2_resource}\nResponse: {agent2_response}"
+        messages.append(AIMessage(content=ans1))
+        messages.append(AIMessage(content=ans2))
+    else:
+        ans1 = f"Source: {agent1_resouce}\nResponse: {agent1_response}"
+        ans2 = f"Source: {agent2_resource}\nResponse: {agent2_response}"
+        messages.append(AIMessage(content=ans1))
+        messages.append(AIMessage(content=ans2))
+
+    system_message = ("""
+    You are a helpful assistant. Use the following AI-generated responses, which include sourced information, to answer the user’s question. 
+    Your goal is not to summarize what each response said, but to synthesize a clear, informative, and direct answer based on the available information. 
+    Please follow the below guidelines:
+    1. If multiple perspectives are provided, integrate them to form a complete response. 
+    2. Write at a 6th to 8th grade reading level. Avoid medical jargon. If a medical term must be used, 
+    define it simply. 
+    3. Rely strictly on the provided text, without including external information.
+    4. In the end, include resources used to generate the answer
+    """)
+    
+    
+    response_OOD = "The STAR-C materials don’t have this information, I’ll ask the STAR-C coach to check in with you to make sure your question gets answered. However, here's the possible answer.\n"
+    prompt = [SystemMessage(content=system_message), 
+              state['messages'][-1]] + messages
+    response = llm.invoke(prompt)
+    ans = response.content if not response_prefix else response_OOD + response.content
+    return {"messages": [AIMessage(content=ans)]}
 
 
 graph_builder = StateGraph(MessagesState)
